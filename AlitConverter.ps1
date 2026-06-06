@@ -410,16 +410,87 @@ function Install-PortableDependencies {
             [string]$outPath,
             [string]$activity
         )
-        Write-Host "`n[DOWNLOAD] Downloading $activity..." -ForegroundColor Cyan
+        Write-Host "[DOWNLOAD] Downloading $activity..." -ForegroundColor Cyan
         
-        # Turn on progress bar (sometimes disabled by profiles)
-        $oldProgressPreference = $ProgressPreference
-        $ProgressPreference = 'Continue'
+        # Ensure TLS 1.2 is active for external downloads
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        Add-Type -AssemblyName System.Net.Http
+        
+        $httpClient = $null
+        $response = $null
+        $downloadStream = $null
+        $fileStream = $null
         
         try {
-            Invoke-WebRequest -Uri $url -OutFile $outPath -UseBasicParsing -ErrorAction Stop
+            $httpClient = New-Object System.Net.Http.HttpClient
+            $response = $httpClient.GetAsync($url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            
+            if (!$response.IsSuccessStatusCode) {
+                throw "HTTP Request failed with status code $($response.StatusCode)"
+            }
+            
+            $contentLength = $response.Content.Headers.ContentLength
+            $downloadStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+            $fileStream = [System.IO.File]::Create($outPath)
+            
+            $buffer = New-Object byte[] 65536 # 64KB chunks
+            $totalBytesRead = 0
+            $startWatch = [System.Diagnostics.Stopwatch]::StartNew()
+            
+            # Write a dummy initial progress bar
+            Write-Host -NoNewline "Progress: [                              ] 0% (0.00 MB / 0.00 MB)"
+            
+            while ($true) {
+                $bytesRead = $downloadStream.Read($buffer, 0, $buffer.Length)
+                if ($bytesRead -eq 0) { break }
+                
+                $fileStream.Write($buffer, 0, $bytesRead)
+                $totalBytesRead += $bytesRead
+                
+                if ($contentLength) {
+                    $percent = [int](($totalBytesRead / $contentLength) * 100)
+                    $mbRead = [math]::Round($totalBytesRead / 1MB, 2)
+                    $mbTotal = [math]::Round($contentLength / 1MB, 2)
+                    
+                    $elapsedSeconds = $startWatch.Elapsed.TotalSeconds
+                    $speedStr = ""
+                    if ($elapsedSeconds -gt 0) {
+                        $speed = [math]::Round(($totalBytesRead / 1MB) / $elapsedSeconds, 2)
+                        $speedStr = " @ $speed MB/s"
+                    }
+                    
+                    # 30-char visual progress bar
+                    $barWidth = 30
+                    $doneWidth = [int]($percent * $barWidth / 100)
+                    $todoWidth = $barWidth - $doneWidth
+                    $bar = ("=" * $doneWidth) + (" " * $todoWidth)
+                    
+                    $statusLine = "`rProgress: [$bar] $percent% ($mbRead / $mbTotal MB)$speedStr"
+                    Write-Host -NoNewline ($statusLine.PadRight(100))
+                } else {
+                    $mbRead = [math]::Round($totalBytesRead / 1MB, 2)
+                    $elapsedSeconds = $startWatch.Elapsed.TotalSeconds
+                    $speedStr = ""
+                    if ($elapsedSeconds -gt 0) {
+                        $speed = [math]::Round(($totalBytesRead / 1MB) / $elapsedSeconds, 2)
+                        $speedStr = " @ $speed MB/s"
+                    }
+                    $statusLine = "`rProgress: $mbRead MB downloaded$speedStr"
+                    Write-Host -NoNewline ($statusLine.PadRight(100))
+                }
+            }
+            
+            # Print newline when download is completed
+            Write-Host ""
+            $startWatch.Stop()
+        } catch {
+            Write-Host "`n[ERROR] Download failed: $_" -ForegroundColor Red
+            throw $_
         } finally {
-            $ProgressPreference = $oldProgressPreference
+            if ($fileStream) { $fileStream.Dispose() }
+            if ($downloadStream) { $downloadStream.Dispose() }
+            if ($response) { $response.Dispose() }
+            if ($httpClient) { $httpClient.Dispose() }
         }
     }
 
