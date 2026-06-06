@@ -9,6 +9,35 @@ $Header = @"
 Clear-Host
 Write-Host $Header -ForegroundColor Cyan
 
+# Get the directory of the running script or compiled EXE (critical for ps2exe)
+$AppDir = $PSScriptRoot
+if (!$AppDir) {
+    $exePath = [Environment]::GetCommandLineArgs()[0]
+    if ($exePath -and (Test-Path $exePath)) {
+        $AppDir = Split-Path $exePath -Parent
+    } else {
+        if ($MyInvocation.MyCommand.Path) {
+            $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        } else {
+            $AppDir = $pwd
+        }
+    }
+}
+
+# Ensure PSCommandPath is populated (critical for isExe check and shortcut creation)
+if (!$PSCommandPath) {
+    $exePath = [Environment]::GetCommandLineArgs()[0]
+    if ($exePath -and (Test-Path $exePath)) {
+        $PSCommandPath = $exePath
+    } else {
+        if ($MyInvocation.MyCommand.Path) {
+            $PSCommandPath = $MyInvocation.MyCommand.Path
+        } else {
+            $PSCommandPath = Join-Path $AppDir "AlitConverter.ps1"
+        }
+    }
+}
+
 # --- BEGIN BUNDLED MODULES ---
 # [[BUNDLED_MODULES]]
 # --- END BUNDLED MODULES ---
@@ -72,20 +101,50 @@ if ($args.Count -eq 0) {
 
 # 2. Dependency Check
 Write-Host "[SYSTEM CHECK] Checking dependencies..." -ForegroundColor Gray
-$deps = Get-SystemDependencies
+$deps = Get-SystemDependencies -AppDir $AppDir
 
-if (!$deps.FfmpegExists -or (!$deps.FfprobeExists)) {
-    Write-Host "ERROR: ffmpeg and/or ffprobe could not be found in your system PATH." -ForegroundColor Red
-    Write-Host "Please install FFmpeg and make sure it is added to your environment variables." -ForegroundColor Yellow
+$ffmpegMissing = !$deps.FfmpegExists -or !$deps.FfprobeExists
+$magickMissing = !$deps.MagickExists
+
+if ($ffmpegMissing -or $magickMissing) {
+    if ($ffmpegMissing) {
+        Write-Host "WARNING: FFmpeg (ffmpeg and/or ffprobe) is missing." -ForegroundColor Yellow
+    }
+    if ($magickMissing) {
+        Write-Host "WARNING: ImageMagick (magick) is missing (optional for image conversion)." -ForegroundColor Yellow
+    }
+    
+    Write-Host "`nWould you like to automatically download and extract the missing dependencies?" -ForegroundColor Cyan
+    Write-Host "This will download portable binaries (~130MB total) into: $(Join-Path $AppDir 'bin\')" -ForegroundColor Cyan
+    
+    $downloadChoice = Read-Host "Download missing dependencies? (Y/N)"
+    if ($downloadChoice.Trim() -match '^[Yy]$') {
+        # Install-PortableDependencies is defined in src/System/DependencyInstaller.ps1 which is bundled
+        Install-PortableDependencies -AppDir $AppDir
+        # Re-check dependencies
+        $deps = Get-SystemDependencies -AppDir $AppDir
+        $ffmpegMissing = !$deps.FfmpegExists -or !$deps.FfprobeExists
+        $magickMissing = !$deps.MagickExists
+    }
+}
+
+if ($ffmpegMissing) {
+    Write-Host "ERROR: ffmpeg and/or ffprobe could not be found in your local bin/ folder or system PATH." -ForegroundColor Red
+    Write-Host "Please download them manually, place them in the 'bin' directory next to the program, and try again." -ForegroundColor Yellow
     Write-Host "`nPress any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
-if (!$deps.MagickExists) {
-    Write-Host "[WARNING] ImageMagick ('magick') was not found in your system PATH." -ForegroundColor Yellow
+if ($magickMissing) {
+    Write-Host "[WARNING] ImageMagick ('magick') was not found in your local bin/ folder or system PATH." -ForegroundColor Yellow
     Write-Host "          Image conversion options will be disabled." -ForegroundColor Yellow
 }
+
+# Save resolved paths to global variables for processors to use
+$global:FfmpegPath = $deps.FfmpegPath
+$global:FfprobePath = $deps.FfprobePath
+$global:MagickPath = $deps.MagickPath
 
 # 3. Input Processing & Auto-Detection
 $imageExtensions = @('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif', '.gif', '.heic')

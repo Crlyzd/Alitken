@@ -44,7 +44,7 @@ function Invoke-ImageConversion {
             }
             $magickArgs += "`"$resolvedOutFile`""
             
-            $cmdLine = "magick " + ($magickArgs -join " ")
+            $cmdLine = "`"$global:MagickPath`" " + ($magickArgs -join " ")
             
             $errLogPath = "$env:TEMP\magick_pdf_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
@@ -133,7 +133,7 @@ function Invoke-ImageConversion {
             $errLogPath = "$env:TEMP\magick_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
             
-            $magickCmd = "magick `"$($file.FullName)`" $magickQualityFlags `"$resolvedOutFile`""
+            $magickCmd = "`"$global:MagickPath`" `"$($file.FullName)`" $magickQualityFlags `"$resolvedOutFile`""
             
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = "cmd.exe"

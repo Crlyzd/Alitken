@@ -9,6 +9,35 @@ $Header = @"
 Clear-Host
 Write-Host $Header -ForegroundColor Cyan
 
+# Get the directory of the running script or compiled EXE (critical for ps2exe)
+$AppDir = $PSScriptRoot
+if (!$AppDir) {
+    $exePath = [Environment]::GetCommandLineArgs()[0]
+    if ($exePath -and (Test-Path $exePath)) {
+        $AppDir = Split-Path $exePath -Parent
+    } else {
+        if ($MyInvocation.MyCommand.Path) {
+            $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        } else {
+            $AppDir = $pwd
+        }
+    }
+}
+
+# Ensure PSCommandPath is populated (critical for isExe check and shortcut creation)
+if (!$PSCommandPath) {
+    $exePath = [Environment]::GetCommandLineArgs()[0]
+    if ($exePath -and (Test-Path $exePath)) {
+        $PSCommandPath = $exePath
+    } else {
+        if ($MyInvocation.MyCommand.Path) {
+            $PSCommandPath = $MyInvocation.MyCommand.Path
+        } else {
+            $PSCommandPath = Join-Path $AppDir "AlitConverter.ps1"
+        }
+    }
+}
+
 # --- BEGIN BUNDLED MODULES ---
 
 # --- START OF MODULE: ImageProcessor.ps1 ---
@@ -58,7 +87,7 @@ function Invoke-ImageConversion {
             }
             $magickArgs += "`"$resolvedOutFile`""
             
-            $cmdLine = "magick " + ($magickArgs -join " ")
+            $cmdLine = "`"$global:MagickPath`" " + ($magickArgs -join " ")
             
             $errLogPath = "$env:TEMP\magick_pdf_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
@@ -147,7 +176,7 @@ function Invoke-ImageConversion {
             $errLogPath = "$env:TEMP\magick_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
             
-            $magickCmd = "magick `"$($file.FullName)`" $magickQualityFlags `"$resolvedOutFile`""
+            $magickCmd = "`"$global:MagickPath`" `"$($file.FullName)`" $magickQualityFlags `"$resolvedOutFile`""
             
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = "cmd.exe"
@@ -218,7 +247,7 @@ function Invoke-VideoConversion {
         if (!$resolvedOutFile) { continue }
 
         Write-Host "`n[ANALYZING] $($file.Name)..." -ForegroundColor Gray
-        $totalFrames = & ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=noprint_wrappers=1:nokey=1 "$($file.FullName)"
+        $totalFrames = & $global:FfprobePath -v error -select_streams v:0 -show_entries stream=nb_frames -of default=noprint_wrappers=1:nokey=1 "$($file.FullName)"
         if ($totalFrames -eq "N/A" -or !$totalFrames) { $totalFrames = 1000 }
 
         Write-Host "[WORKING]  Encoding video (Audio Copy)..." -ForegroundColor Green
@@ -256,7 +285,7 @@ function Invoke-VideoConversion {
         }
 
         # 3. Final Command (using -c:a copy to maintain original audio)
-        $ffmpegCmd = "ffmpeg -hide_banner -i `"$($file.FullName)`" $vfFlag -c:v $encoder $encArgs $bitrateFlags -map 0:v:0 -map 0:a? -c:a copy -fps_mode cfr -y -progress pipe:1 `"$resolvedOutFile`" 2> `"$errLogPath`""
+        $ffmpegCmd = "`"$global:FfmpegPath`" -hide_banner -i `"$($file.FullName)`" $vfFlag -c:v $encoder $encArgs $bitrateFlags -map 0:v:0 -map 0:a? -c:a copy -fps_mode cfr -y -progress pipe:1 `"$resolvedOutFile`" 2> `"$errLogPath`""
         
         $psi.Arguments = "/c $ffmpegCmd"
         $psi.UseShellExecute = $false
@@ -297,22 +326,212 @@ function Invoke-VideoConversion {
 function Get-SystemDependencies {
     <#
     .SYNOPSIS
-        Checks if required command-line tools are available in the system PATH.
+        Checks if required command-line tools are available in the local bin/ folder or the system PATH.
+    .PARAMETER AppDir
+        The root directory of the application where the local bin/ folder is located.
     .OUTPUTS
-        [PSCustomObject] containing booleans: FfmpegExists, FfprobeExists, MagickExists.
+        [PSCustomObject] containing booleans and paths for Ffmpeg, Ffprobe, and Magick.
     #>
-    $ffmpegExists = Get-Command ffmpeg -ErrorAction SilentlyContinue
-    $ffprobeExists = Get-Command ffprobe -ErrorAction SilentlyContinue
-    $magickExists = Get-Command magick -ErrorAction SilentlyContinue
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$AppDir
+    )
+
+    $localBin = Join-Path $AppDir "bin"
+    $ffmpegPath = ""
+    $ffprobePath = ""
+    $magickPath = ""
+
+    # 1. Resolve ffmpeg
+    $localFfmpeg = Join-Path $localBin "ffmpeg.exe"
+    if (Test-Path $localFfmpeg) {
+        $ffmpegPath = $localFfmpeg
+    } else {
+        $cmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+        if ($cmd) { $ffmpegPath = $cmd.Source }
+    }
+
+    # 2. Resolve ffprobe
+    $localFfprobe = Join-Path $localBin "ffprobe.exe"
+    if (Test-Path $localFfprobe) {
+        $ffprobePath = $localFfprobe
+    } else {
+        $cmd = Get-Command ffprobe -ErrorAction SilentlyContinue
+        if ($cmd) { $ffprobePath = $cmd.Source }
+    }
+
+    # 3. Resolve magick
+    $localMagick = Join-Path $localBin "magick.exe"
+    if (Test-Path $localMagick) {
+        $magickPath = $localMagick
+    } else {
+        $cmd = Get-Command magick -ErrorAction SilentlyContinue
+        if ($cmd) { $magickPath = $cmd.Source }
+    }
 
     return [PSCustomObject]@{
-        FfmpegExists  = [bool]$ffmpegExists
-        FfprobeExists = [bool]$ffprobeExists
-        MagickExists  = [bool]$magickExists
+        FfmpegExists  = [bool]$ffmpegPath
+        FfprobeExists = [bool]$ffprobePath
+        MagickExists  = [bool]$magickPath
+        FfmpegPath    = $ffmpegPath
+        FfprobePath   = $ffprobePath
+        MagickPath    = $magickPath
     }
 }
 
 # --- END OF MODULE: DependencyChecker.ps1 ---
+
+# --- START OF MODULE: DependencyInstaller.ps1 ---
+# DependencyInstaller.ps1
+# Contains logic to automatically download and extract portable binaries for FFmpeg and ImageMagick.
+
+function Install-PortableDependencies {
+    <#
+    .SYNOPSIS
+        Downloads and installs FFmpeg and ImageMagick portable binaries into the local bin/ folder.
+    .PARAMETER AppDir
+        The root directory of the application where the bin/ folder will be created.
+    #>
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$AppDir
+    )
+
+    $localBin = Join-Path $AppDir "bin"
+    if (!(Test-Path $localBin)) {
+        New-Item -ItemType Directory -Path $localBin -Force | Out-Null
+    }
+
+    # Helper function for downloads with visual feedback
+    function Start-FileDownload {
+        param (
+            [string]$url,
+            [string]$outPath,
+            [string]$activity
+        )
+        Write-Host "`n[DOWNLOAD] Downloading $activity..." -ForegroundColor Cyan
+        
+        # Turn on progress bar (sometimes disabled by profiles)
+        $oldProgressPreference = $ProgressPreference
+        $ProgressPreference = 'Continue'
+        
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $outPath -UseBasicParsing -ErrorAction Stop
+        } finally {
+            $ProgressPreference = $oldProgressPreference
+        }
+    }
+
+    # --- 1. DOWNLOAD FFmpeg ---
+    $ffmpegZip = Join-Path $env:TEMP "ffmpeg.zip"
+    $ffmpegExtractTemp = Join-Path $env:TEMP "ffmpeg_extract_temp"
+    
+    if (Test-Path $ffmpegZip) { Remove-Item $ffmpegZip -Force }
+    if (Test-Path $ffmpegExtractTemp) { Remove-Item $ffmpegExtractTemp -Recurse -Force }
+    
+    try {
+        $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+        Start-FileDownload -url $ffmpegUrl -outPath $ffmpegZip -activity "FFmpeg Essentials Pack (~90MB)"
+        
+        Write-Host "[EXTRACT] Extracting FFmpeg archive..." -ForegroundColor Cyan
+        Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtractTemp -Force
+        
+        # Locate and copy binaries recursively to bin/
+        $ffmpegFile = Get-ChildItem -Path $ffmpegExtractTemp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+        $ffprobeFile = Get-ChildItem -Path $ffmpegExtractTemp -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
+        
+        if ($ffmpegFile) {
+            Move-Item -Path $ffmpegFile.FullName -Destination $localBin -Force
+            Write-Host "[SUCCESS] Extracted ffmpeg.exe to local bin/" -ForegroundColor Green
+        } else {
+            throw "ffmpeg.exe not found in the extracted files."
+        }
+        
+        if ($ffprobeFile) {
+            Move-Item -Path $ffprobeFile.FullName -Destination $localBin -Force
+            Write-Host "[SUCCESS] Extracted ffprobe.exe to local bin/" -ForegroundColor Green
+        } else {
+            throw "ffprobe.exe not found in the extracted files."
+        }
+        
+    } catch {
+        Write-Host "[ERROR] Failed to install FFmpeg: $_" -ForegroundColor Red
+    } finally {
+        if (Test-Path $ffmpegZip) { Remove-Item $ffmpegZip -Force }
+        if (Test-Path $ffmpegExtractTemp) { Remove-Item $ffmpegExtractTemp -Recurse -Force }
+    }
+
+    # --- 2. DOWNLOAD ImageMagick ---
+    $magick7z = Join-Path $env:TEMP "imagemagick.7z"
+    $magickExtractTemp = Join-Path $localBin "magick_extract_temp"
+    $sevenZipExe = Join-Path $localBin "7zr.exe"
+    
+    if (Test-Path $magick7z) { Remove-Item $magick7z -Force }
+    if (Test-Path $magickExtractTemp) { Remove-Item $magickExtractTemp -Recurse -Force }
+    
+    try {
+        # A. Download 7zr.exe console helper if not exists
+        if (!(Test-Path $sevenZipExe)) {
+            $sevenZipUrl = "https://www.7-zip.org/a/7zr.exe"
+            Start-FileDownload -url $sevenZipUrl -outPath $sevenZipExe -activity "7-Zip console helper (7zr.exe)"
+        }
+        
+        # B. Get latest ImageMagick download URL from GitHub releases API
+        Write-Host "[API] Resolving latest ImageMagick release URL..." -ForegroundColor Cyan
+        $apiUri = "https://api.github.com/repos/ImageMagick/ImageMagick/releases/latest"
+        $magickUrl = ""
+        try {
+            $release = Invoke-RestMethod -Uri $apiUri -UseBasicParsing -ErrorAction Stop
+            $asset = $release.assets | Where-Object { $_.name -like "*portable*x64.7z" } | Select-Object -First 1
+            if ($asset) {
+                $magickUrl = $asset.browser_download_url
+            }
+        } catch {
+            Write-Host "Warning: Could not contact GitHub API. Using fallback ImageMagick archive URL..." -ForegroundColor Yellow
+        }
+        
+        if (!$magickUrl) {
+            # Fallback direct archive URL
+            $magickUrl = "https://imagemagick.org/archive/binaries/ImageMagick-7.1.1-33-portable-Q16-x64.7z"
+        }
+        
+        Start-FileDownload -url $magickUrl -outPath $magick7z -activity "ImageMagick Portable Pack (~40MB)"
+        
+        Write-Host "[EXTRACT] Extracting ImageMagick archive..." -ForegroundColor Cyan
+        # Run 7zr.exe to extract .7z archive
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $sevenZipExe
+        $psi.Arguments = "x `"$magick7z`" -o`"$magickExtractTemp`" -y"
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        $p.Start() | Out-Null
+        $p.WaitForExit()
+        
+        if ($p.ExitCode -eq 0) {
+            $magickFile = Get-ChildItem -Path $magickExtractTemp -Filter "magick.exe" -Recurse | Select-Object -First 1
+            if ($magickFile) {
+                Move-Item -Path $magickFile.FullName -Destination $localBin -Force
+                Write-Host "[SUCCESS] Extracted magick.exe to local bin/" -ForegroundColor Green
+            } else {
+                throw "magick.exe not found in the extracted files."
+            }
+        } else {
+            Write-Host "[ERROR] 7zr extraction failed with exit code $($p.ExitCode)" -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "[ERROR] Failed to install ImageMagick: $_" -ForegroundColor Red
+    } finally {
+        # Clean up temporary downloads/extractions
+        if (Test-Path $magick7z) { Remove-Item $magick7z -Force }
+        if (Test-Path $magickExtractTemp) { Remove-Item $magickExtractTemp -Recurse -Force }
+        if (Test-Path $sevenZipExe) { Remove-Item $sevenZipExe -Force }
+    }
+}
+
+# --- END OF MODULE: DependencyInstaller.ps1 ---
 
 # --- START OF MODULE: GpuDetector.ps1 ---
 function Get-GpuEncoder {
@@ -962,20 +1181,50 @@ if ($args.Count -eq 0) {
 
 # 2. Dependency Check
 Write-Host "[SYSTEM CHECK] Checking dependencies..." -ForegroundColor Gray
-$deps = Get-SystemDependencies
+$deps = Get-SystemDependencies -AppDir $AppDir
 
-if (!$deps.FfmpegExists -or (!$deps.FfprobeExists)) {
-    Write-Host "ERROR: ffmpeg and/or ffprobe could not be found in your system PATH." -ForegroundColor Red
-    Write-Host "Please install FFmpeg and make sure it is added to your environment variables." -ForegroundColor Yellow
+$ffmpegMissing = !$deps.FfmpegExists -or !$deps.FfprobeExists
+$magickMissing = !$deps.MagickExists
+
+if ($ffmpegMissing -or $magickMissing) {
+    if ($ffmpegMissing) {
+        Write-Host "WARNING: FFmpeg (ffmpeg and/or ffprobe) is missing." -ForegroundColor Yellow
+    }
+    if ($magickMissing) {
+        Write-Host "WARNING: ImageMagick (magick) is missing (optional for image conversion)." -ForegroundColor Yellow
+    }
+    
+    Write-Host "`nWould you like to automatically download and extract the missing dependencies?" -ForegroundColor Cyan
+    Write-Host "This will download portable binaries (~130MB total) into: $(Join-Path $AppDir 'bin\')" -ForegroundColor Cyan
+    
+    $downloadChoice = Read-Host "Download missing dependencies? (Y/N)"
+    if ($downloadChoice.Trim() -match '^[Yy]$') {
+        # Install-PortableDependencies is defined in src/System/DependencyInstaller.ps1 which is bundled
+        Install-PortableDependencies -AppDir $AppDir
+        # Re-check dependencies
+        $deps = Get-SystemDependencies -AppDir $AppDir
+        $ffmpegMissing = !$deps.FfmpegExists -or !$deps.FfprobeExists
+        $magickMissing = !$deps.MagickExists
+    }
+}
+
+if ($ffmpegMissing) {
+    Write-Host "ERROR: ffmpeg and/or ffprobe could not be found in your local bin/ folder or system PATH." -ForegroundColor Red
+    Write-Host "Please download them manually, place them in the 'bin' directory next to the program, and try again." -ForegroundColor Yellow
     Write-Host "`nPress any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
 }
 
-if (!$deps.MagickExists) {
-    Write-Host "[WARNING] ImageMagick ('magick') was not found in your system PATH." -ForegroundColor Yellow
+if ($magickMissing) {
+    Write-Host "[WARNING] ImageMagick ('magick') was not found in your local bin/ folder or system PATH." -ForegroundColor Yellow
     Write-Host "          Image conversion options will be disabled." -ForegroundColor Yellow
 }
+
+# Save resolved paths to global variables for processors to use
+$global:FfmpegPath = $deps.FfmpegPath
+$global:FfprobePath = $deps.FfprobePath
+$global:MagickPath = $deps.MagickPath
 
 # 3. Input Processing & Auto-Detection
 $imageExtensions = @('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif', '.gif', '.heic')

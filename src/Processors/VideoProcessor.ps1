@@ -41,7 +41,7 @@ function Invoke-VideoConversion {
         if (!$resolvedOutFile) { continue }
 
         Write-Host "`n[ANALYZING] $($file.Name)..." -ForegroundColor Gray
-        $totalFrames = & ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=noprint_wrappers=1:nokey=1 "$($file.FullName)"
+        $totalFrames = & $global:FfprobePath -v error -select_streams v:0 -show_entries stream=nb_frames -of default=noprint_wrappers=1:nokey=1 "$($file.FullName)"
         if ($totalFrames -eq "N/A" -or !$totalFrames) { $totalFrames = 1000 }
 
         Write-Host "[WORKING]  Encoding video (Audio Copy)..." -ForegroundColor Green
@@ -79,7 +79,7 @@ function Invoke-VideoConversion {
         }
 
         # 3. Final Command (using -c:a copy to maintain original audio)
-        $ffmpegCmd = "ffmpeg -hide_banner -i `"$($file.FullName)`" $vfFlag -c:v $encoder $encArgs $bitrateFlags -map 0:v:0 -map 0:a? -c:a copy -fps_mode cfr -y -progress pipe:1 `"$resolvedOutFile`" 2> `"$errLogPath`""
+        $ffmpegCmd = "`"$global:FfmpegPath`" -hide_banner -i `"$($file.FullName)`" $vfFlag -c:v $encoder $encArgs $bitrateFlags -map 0:v:0 -map 0:a? -c:a copy -fps_mode cfr -y -progress pipe:1 `"$resolvedOutFile`" 2> `"$errLogPath`""
         
         $psi.Arguments = "/c $ffmpegCmd"
         $psi.UseShellExecute = $false

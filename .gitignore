@@ -6,3 +6,6 @@ AlitConverter.exe
 .idea/
 *.suo
 *.user
+
+# Local Portable Binaries
+bin/
