@@ -48,7 +48,13 @@ if (Get-Command ps2exe -ErrorAction SilentlyContinue) {
     Write-Host "`nCompiling standalone script to EXE..." -ForegroundColor Cyan
     try {
         # Using ps2exe alias (Invoke-ps2exe cmdlet)
-        ps2exe -inputFile $outputFile -outputFile $exeFile -title "Alit Converter" -description "Alit Converter by Curlyzed" -version "0.2.0" -x64
+        $iconPath = Join-Path $srcPath "Assets\icon.ico"
+        if (Test-Path $iconPath) {
+            Write-Host "-> Using custom icon: $iconPath" -ForegroundColor Gray
+            ps2exe -inputFile $outputFile -outputFile $exeFile -iconFile $iconPath -title "Alit Converter" -description "Alit Converter by Curlyzed" -version "0.2.0" -x64
+        } else {
+            ps2exe -inputFile $outputFile -outputFile $exeFile -title "Alit Converter" -description "Alit Converter by Curlyzed" -version "0.2.0" -x64
+        }
         Write-Host "Compilation complete! Standalone executable written to: $exeFile" -ForegroundColor Green
     } catch {
         Write-Host "ERROR: Compilation failed: $_" -ForegroundColor Red
