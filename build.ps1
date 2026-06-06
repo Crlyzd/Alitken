@@ -1,7 +1,10 @@
 # build.ps1
 # Compiles the src/ directory into a single standalone AlitConverter.ps1 file.
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = $PSScriptRoot
+if (!$ScriptDir) {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 
 $srcPath = Join-Path $ScriptDir "src"
 $templateFile = Join-Path $srcPath "AlitConverter.template.ps1"

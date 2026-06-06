@@ -24,16 +24,17 @@ if (!$AppDir) {
     }
 }
 
-# Ensure PSCommandPath is populated (critical for isExe check and shortcut creation)
-if (!$PSCommandPath) {
+# Ensure CommandPath is populated (critical for isExe check and shortcut creation)
+$CommandPath = $PSCommandPath
+if (!$CommandPath) {
     $exePath = [Environment]::GetCommandLineArgs()[0]
     if ($exePath -and (Test-Path $exePath)) {
-        $PSCommandPath = $exePath
+        $CommandPath = $exePath
     } else {
         if ($MyInvocation.MyCommand.Path) {
-            $PSCommandPath = $MyInvocation.MyCommand.Path
+            $CommandPath = $MyInvocation.MyCommand.Path
         } else {
-            $PSCommandPath = Join-Path $AppDir "AlitConverter.ps1"
+            $CommandPath = Join-Path $AppDir "AlitConverter.ps1"
         }
     }
 }
@@ -94,7 +95,7 @@ function Invoke-ImageConversion {
             
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = "cmd.exe"
-            $psi.Arguments = "/c $cmdLine 2> `"$errLogPath`""
+            $psi.Arguments = "/c @cd . & $cmdLine 2> `"$errLogPath`""
             $psi.UseShellExecute = $false
             $psi.CreateNoWindow = $true
             
@@ -180,7 +181,7 @@ function Invoke-ImageConversion {
             
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = "cmd.exe"
-            $psi.Arguments = "/c $magickCmd 2> `"$errLogPath`""
+            $psi.Arguments = "/c @cd . & $magickCmd 2> `"$errLogPath`""
             $psi.UseShellExecute = $false
             $psi.CreateNoWindow = $true
             
@@ -269,9 +270,9 @@ function Invoke-VideoConversion {
                 "libx264"    { $bitrateFlags = "-crf 23" }
                 "libx265"    { $bitrateFlags = "-crf 23" }
                 "libaom-av1" { $bitrateFlags = "-crf 30" }
-                "h264_nvenc" { $bitrateFlags = "-rc constqp -qp 23" }
-                "hevc_nvenc" { $bitrateFlags = "-rc constqp -qp 23" }
-                "av1_nvenc"  { $bitrateFlags = "-rc constqp -qp 23" }
+                "h264_nvenc" { $bitrateFlags = "-qp 23" }
+                "hevc_nvenc" { $bitrateFlags = "-qp 23" }
+                "av1_nvenc"  { $bitrateFlags = "-qp 23" }
                 "h264_amf"   { $bitrateFlags = "-rc cqp -qp_i 23 -qp_p 23" }
                 "hevc_amf"   { $bitrateFlags = "-rc cqp -qp_i 23 -qp_p 23" }
                 "av1_amf"    { $bitrateFlags = "-rc cqp -qp_i 23 -qp_p 23" }
@@ -287,7 +288,7 @@ function Invoke-VideoConversion {
         # 3. Final Command (using -c:a copy to maintain original audio)
         $ffmpegCmd = "`"$global:FfmpegPath`" -hide_banner -i `"$($file.FullName)`" $vfFlag -c:v $encoder $encArgs $bitrateFlags -map 0:v:0 -map 0:a? -c:a copy -fps_mode cfr -y -progress pipe:1 `"$resolvedOutFile`" 2> `"$errLogPath`""
         
-        $psi.Arguments = "/c $ffmpegCmd"
+        $psi.Arguments = "/c @cd . & $ffmpegCmd"
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
         $psi.CreateNoWindow = $true
@@ -1143,20 +1144,20 @@ if ($args.Count -eq 0) {
     if ($choice -eq "1") {
         Write-Host "`n[WORKING] Installing shortcut to SendTo menu..." -ForegroundColor Green
         try {
-            $isExe = $PSCommandPath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)
+            $isExe = $CommandPath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)
             
             $WshShell = New-Object -ComObject WScript.Shell
             $Shortcut = $WshShell.CreateShortcut($shortcutPath)
             
             if ($isExe) {
-                $Shortcut.TargetPath = $PSCommandPath
+                $Shortcut.TargetPath = $CommandPath
                 $Shortcut.Arguments = ""
             } else {
                 $Shortcut.TargetPath = "powershell.exe"
-                $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+                $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$CommandPath`""
             }
             
-            $Shortcut.WorkingDirectory = Split-Path $PSCommandPath -Parent
+            $Shortcut.WorkingDirectory = Split-Path $CommandPath -Parent
             $Shortcut.Save()
             
             Write-Host "[SUCCESS] Installation complete!" -ForegroundColor Cyan

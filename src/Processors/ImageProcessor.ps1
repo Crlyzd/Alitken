@@ -51,7 +51,7 @@ function Invoke-ImageConversion {
             
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = "cmd.exe"
-            $psi.Arguments = "/c $cmdLine 2> `"$errLogPath`""
+            $psi.Arguments = "/c @cd . & $cmdLine 2> `"$errLogPath`""
             $psi.UseShellExecute = $false
             $psi.CreateNoWindow = $true
             
@@ -137,7 +137,7 @@ function Invoke-ImageConversion {
             
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = "cmd.exe"
-            $psi.Arguments = "/c $magickCmd 2> `"$errLogPath`""
+            $psi.Arguments = "/c @cd . & $magickCmd 2> `"$errLogPath`""
             $psi.UseShellExecute = $false
             $psi.CreateNoWindow = $true
             

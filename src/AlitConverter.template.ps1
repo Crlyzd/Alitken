@@ -24,16 +24,17 @@ if (!$AppDir) {
     }
 }
 
-# Ensure PSCommandPath is populated (critical for isExe check and shortcut creation)
-if (!$PSCommandPath) {
+# Ensure CommandPath is populated (critical for isExe check and shortcut creation)
+$CommandPath = $PSCommandPath
+if (!$CommandPath) {
     $exePath = [Environment]::GetCommandLineArgs()[0]
     if ($exePath -and (Test-Path $exePath)) {
-        $PSCommandPath = $exePath
+        $CommandPath = $exePath
     } else {
         if ($MyInvocation.MyCommand.Path) {
-            $PSCommandPath = $MyInvocation.MyCommand.Path
+            $CommandPath = $MyInvocation.MyCommand.Path
         } else {
-            $PSCommandPath = Join-Path $AppDir "AlitConverter.ps1"
+            $CommandPath = Join-Path $AppDir "AlitConverter.ps1"
         }
     }
 }
@@ -63,20 +64,20 @@ if ($args.Count -eq 0) {
     if ($choice -eq "1") {
         Write-Host "`n[WORKING] Installing shortcut to SendTo menu..." -ForegroundColor Green
         try {
-            $isExe = $PSCommandPath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)
+            $isExe = $CommandPath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)
             
             $WshShell = New-Object -ComObject WScript.Shell
             $Shortcut = $WshShell.CreateShortcut($shortcutPath)
             
             if ($isExe) {
-                $Shortcut.TargetPath = $PSCommandPath
+                $Shortcut.TargetPath = $CommandPath
                 $Shortcut.Arguments = ""
             } else {
                 $Shortcut.TargetPath = "powershell.exe"
-                $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+                $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$CommandPath`""
             }
             
-            $Shortcut.WorkingDirectory = Split-Path $PSCommandPath -Parent
+            $Shortcut.WorkingDirectory = Split-Path $CommandPath -Parent
             $Shortcut.Save()
             
             Write-Host "[SUCCESS] Installation complete!" -ForegroundColor Cyan
