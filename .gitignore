@@ -1,0 +1,8 @@
+# Build Artifacts
+AlitConverter.exe
+
+# OS & IDE temporary files
+.vscode/
+.idea/
+*.suo
+*.user

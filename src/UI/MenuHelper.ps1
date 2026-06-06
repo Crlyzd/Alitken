@@ -41,7 +41,14 @@ function Show-Menu {
         if ($AllowQuit) { $promptKeys += "Q" }
         $prompt = "Pick (" + ($promptKeys -join "-") + ")"
         
-        $choice = (Read-Host $prompt).Trim()
+        $rawInput = Read-Host $prompt
+        if ($null -eq $rawInput) {
+            # Stdin EOF reached. Fallback to prevent infinite loop.
+            if ($AllowQuit) { return "q" }
+            return "b"
+        }
+        
+        $choice = $rawInput.Trim()
         if ($validKeys.Contains($choice)) {
             return $choice.ToLower()
         }

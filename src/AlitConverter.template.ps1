@@ -34,11 +34,19 @@ if ($args.Count -eq 0) {
     if ($choice -eq "1") {
         Write-Host "`n[WORKING] Installing shortcut to SendTo menu..." -ForegroundColor Green
         try {
+            $isExe = $PSCommandPath.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)
+            
             $WshShell = New-Object -ComObject WScript.Shell
             $Shortcut = $WshShell.CreateShortcut($shortcutPath)
-            $Shortcut.TargetPath = "powershell.exe"
-            # We use `"$PSCommandPath`" to wrap the path in quotes safely
-            $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+            
+            if ($isExe) {
+                $Shortcut.TargetPath = $PSCommandPath
+                $Shortcut.Arguments = ""
+            } else {
+                $Shortcut.TargetPath = "powershell.exe"
+                $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+            }
+            
             $Shortcut.WorkingDirectory = Split-Path $PSCommandPath -Parent
             $Shortcut.Save()
             
