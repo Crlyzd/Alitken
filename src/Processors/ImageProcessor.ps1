@@ -94,23 +94,24 @@ function Invoke-ImageConversion {
             while (!$p.StandardError.EndOfStream) {
                 $line = $p.StandardError.ReadLine()
                 if ($line) {
-                    if ($line -match "^([^\[]+)\[([^\]]+)\]:\s*(?:.*?(\d+)%\s+complete)?") {
+                    if ($line -match "^([^\[]+)\[([^\]]+)\]:\s*(?:(\d+)\s+of\s+(\d+),\s*)?(\d+)%\s+complete") {
                         $rawPhase = $matches[1]
                         $target = $matches[2]
-                        $pct = if ($matches[3]) { [int]$matches[3] } else { 0 }
+                        $step = if ($matches[3]) { [int]$matches[3] } else { $null }
+                        $total = if ($matches[4]) { [int]$matches[4] } else { $null }
+                        $pct = if ($matches[5]) { [int]$matches[5] } else { 0 }
                         if ($pct -gt 100) { $pct = 100 }
-                        
-                        if ($rawPhase -match "Load/Image") {
-                            $foundIndex = -1
-                            for ($i = 0; $i -lt $imageFiles.Count; $i++) {
-                                if ($imageFiles[$i].FullName -eq $target -or $imageFiles[$i].Name -eq $target -or [System.IO.Path]::GetFileName($target) -eq $imageFiles[$i].Name) {
-                                    $foundIndex = $i
-                                    break
-                                }
+                        $foundIndex = -1
+                        for ($i = 0; $i -lt $imageFiles.Count; $i++) {
+                            if ($imageFiles[$i].FullName -eq $target -or $imageFiles[$i].Name -eq $target -or [System.IO.Path]::GetFileName($target) -eq $imageFiles[$i].Name) {
+                                $foundIndex = $i
+                                break
                             }
-                            if ($foundIndex -ne -1) {
-                                $lastKnownImageIdx = $foundIndex + 1
-                            }
+                        }
+                        if ($foundIndex -ne -1) {
+                            $lastKnownImageIdx = $foundIndex + 1
+                        } elseif ($step -and $total -and $total -ne 100) {
+                            $lastKnownImageIdx = [Math]::Min($step, $imageFiles.Count)
                         }
                         
                         $phase = "Merging"
