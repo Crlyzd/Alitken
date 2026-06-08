@@ -31,7 +31,10 @@ function Invoke-VideoConversion {
         $bufSize = [int]$targetBitrate * 2
     }
 
+    $totalVideos = $videoFiles.Count
+    $index = 0
     foreach ($file in $videoFiles) {
+        $index++
         # Formatting the output filename based on choices
         $resTag = if ($targetHeight -eq "ORIGINAL") { "origRes" } else { "$($targetHeight)p" }
         $bitTag = if ($targetBitrate -eq "ORIGINAL") { "origBit" } else { "$($targetBitrate)k" }
@@ -90,14 +93,14 @@ function Invoke-VideoConversion {
         $p.StartInfo = $psi
         $p.Start() | Out-Null
         
-        Show-TextProgressBar -PercentComplete 0 -Status "Starting encoding..."
+        Show-TextProgressBar -PercentComplete 0 -Status "Starting encoding ($index/$totalVideos)..."
         while (!$p.StandardOutput.EndOfStream) {
             $line = $p.StandardOutput.ReadLine()
             if ($line -match "frame=(\d+)") {
                 $cur = [int]$matches[1]
                 $pct = ($cur / $totalFrames) * 100
                 if ($pct -gt 100) { $pct = 100 }
-                Show-TextProgressBar -PercentComplete $pct -Status "Converting: $($file.Name)"
+                Show-TextProgressBar -PercentComplete $pct -Status "Converting ($index/$totalVideos): $($file.Name)"
             }
         }
         $p.WaitForExit()

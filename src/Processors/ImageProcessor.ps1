@@ -86,29 +86,41 @@ function Invoke-ImageConversion {
             
             $p = New-Object System.Diagnostics.Process
             $p.StartInfo = $psi
-            
-            Show-TextProgressBar -PercentComplete 0 -Status "Merging images to PDF..."
+            $lastKnownImageIdx = 1
+            Show-TextProgressBar -PercentComplete 0 -Status "Merging images to PDF (1/$($imageFiles.Count))..."
             $p.Start() | Out-Null
             
             $errLines = @()
             while (!$p.StandardError.EndOfStream) {
                 $line = $p.StandardError.ReadLine()
                 if ($line) {
-                    if ($line -match "^([^\[]+)\[.+?(\d+)%\s+complete") {
+                    if ($line -match "^([^\[]+)\[([^\]]+)\]:\s*(?:.*?(\d+)%\s+complete)?") {
                         $rawPhase = $matches[1]
-                        $pct = [int]$matches[2]
+                        $target = $matches[2]
+                        $pct = if ($matches[3]) { [int]$matches[3] } else { 0 }
                         if ($pct -gt 100) { $pct = 100 }
                         
-                        $phase = "Merging"
-                        switch ($rawPhase) {
-                            "Resize/Image" { $phase = "Resizing images" }
-                            "Save/Images"  { $phase = "Writing PDF" }
-                            "Save/Image"   { $phase = "Writing PDF" }
-                            "Sample/Image" { $phase = "Sampling images" }
-                            default        { $phase = $rawPhase }
+                        if ($rawPhase -match "Load/Image") {
+                            $foundIndex = -1
+                            for ($i = 0; $i -lt $imageFiles.Count; $i++) {
+                                if ($imageFiles[$i].FullName -eq $target -or $imageFiles[$i].Name -eq $target -or [System.IO.Path]::GetFileName($target) -eq $imageFiles[$i].Name) {
+                                    $foundIndex = $i
+                                    break
+                                }
+                            }
+                            if ($foundIndex -ne -1) {
+                                $lastKnownImageIdx = $foundIndex + 1
+                            }
                         }
                         
-                        Show-TextProgressBar -PercentComplete $pct -Status "$phase..."
+                        $phase = "Merging"
+                        if ($rawPhase -match "Resize") { $phase = "Resizing images" }
+                        elseif ($rawPhase -match "Save") { $phase = "Writing PDF" }
+                        elseif ($rawPhase -match "Sample") { $phase = "Sampling images" }
+                        elseif ($rawPhase -match "Load") { $phase = "Loading images" }
+                        else { $phase = $rawPhase }
+                        
+                        Show-TextProgressBar -PercentComplete $pct -Status "$phase ($lastKnownImageIdx/$($imageFiles.Count))..."
                     } else {
                         $errLines += $line
                     }
@@ -185,7 +197,7 @@ function Invoke-ImageConversion {
                 continue
             }
             
-            Show-TextProgressBar -PercentComplete $pct -Status "Converting $($file.Name) to $formatExt..."
+            Show-TextProgressBar -PercentComplete $pct -Status "Converting ($index/$totalImages): $($file.Name) to $formatExt..."
             
             $errLogPath = "$env:TEMP\magick_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
