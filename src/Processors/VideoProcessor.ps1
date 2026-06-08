@@ -90,22 +90,22 @@ function Invoke-VideoConversion {
         $p.StartInfo = $psi
         $p.Start() | Out-Null
         
+        Show-TextProgressBar -PercentComplete 0 -Status "Starting encoding..."
         while (!$p.StandardOutput.EndOfStream) {
             $line = $p.StandardOutput.ReadLine()
             if ($line -match "frame=(\d+)") {
                 $cur = [int]$matches[1]
                 $pct = ($cur / $totalFrames) * 100
                 if ($pct -gt 100) { $pct = 100 }
-                Write-Progress -Activity "Alit Converter" -Status "Converting: $($file.Name)" -PercentComplete $pct
+                Show-TextProgressBar -PercentComplete $pct -Status "Converting: $($file.Name)"
             }
         }
         $p.WaitForExit()
-        Write-Progress -Activity "Alit Converter" -Completed
 
         if ($p.ExitCode -eq 0 -and (Test-Path $resolvedOutFile)) {
-            Write-Host "[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)" -ForegroundColor Cyan
+            Write-Host "`r[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)".PadRight(110) -ForegroundColor Cyan
         } else {
-            Write-Host "[ERROR] FFmpeg failed. Code: $($p.ExitCode)" -ForegroundColor Red
+            Write-Host "`r[ERROR] FFmpeg failed. Code: $($p.ExitCode)".PadRight(110) -ForegroundColor Red
             Write-Host "--- WHAT FFMPEG ACTUALLY SAID ---" -ForegroundColor Yellow
             if (Test-Path $errLogPath) { Get-Content $errLogPath | Write-Host -ForegroundColor DarkRed }
             Write-Host "---------------------------------" -ForegroundColor Yellow

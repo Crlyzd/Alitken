@@ -63,52 +63,110 @@ function Invoke-ImageConversion {
     $webQuality = $config.WebQuality
     $webResChoice = $config.WebResChoice
     $webHeight = $config.WebHeight
+    $pdfQuality = $config.PdfQuality
+    $pdfResChoice = $config.PdfResChoice
+    $pdfHeight = $config.PdfHeight
 
     Write-Host "`n[WORKING] Processing images..." -ForegroundColor Green
     
     if ($imageFormatChoice -eq "2") {
         # PDF format
+        $resizeFlag = ""
+        $resTag = ""
+        if ($pdfResChoice -eq "1") {
+            $resizeFlag = "-resize 30%"
+            $resTag = "_30pct"
+        } elseif ($pdfResChoice -eq "2") {
+            $resizeFlag = "-resize 50%"
+            $resTag = "_50pct"
+        } elseif ($pdfResChoice -eq "3") {
+            $resizeFlag = "-resize 80%"
+            $resTag = "_80pct"
+        } elseif ($pdfResChoice -eq "4") {
+            $resizeFlag = "-resize x$pdfHeight"
+            $resTag = "_h$pdfHeight"
+        }
+
+        $qualityFlag = ""
+        $qualityTag = ""
+        if ($pdfQuality -and $pdfQuality -ne "ORIGINAL") {
+            $qualityFlag = "-quality $pdfQuality"
+            $qualityTag = "_q$pdfQuality"
+        }
+
+        $pdfTag = "${resTag}${qualityTag}"
+
         if ($imageFiles.Count -eq 1) {
             $file = $imageFiles[0]
-            $outFile = "$($file.DirectoryName)\$($file.BaseName).pdf"
+            $outFile = "$($file.DirectoryName)\$($file.BaseName)$pdfTag.pdf"
         } else {
             $firstFile = $imageFiles[0]
-            $outFile = "$($firstFile.DirectoryName)\Merged_Images.pdf"
+            $outFile = "$($firstFile.DirectoryName)\Merged_Images$pdfTag.pdf"
         }
         
         $resolvedOutFile = Get-ConflictResolution -filePath $outFile
         if (!$resolvedOutFile) {
             # Skipped
         } else {
-            Write-Host "[WORKING] Merging $($imageFiles.Count) images into $resolvedOutFile..." -ForegroundColor Green
             # Construct args for magick
-            $magickArgs = @()
+            $magickArgs = @("-monitor")
             foreach ($img in $imageFiles) {
                 $magickArgs += "`"$($img.FullName)`""
             }
+            if ($resizeFlag) {
+                $magickArgs += $resizeFlag
+            }
+            if ($qualityFlag) {
+                $magickArgs += $qualityFlag
+            }
             $magickArgs += "`"$resolvedOutFile`""
             
-            $cmdLine = "`"$global:MagickPath`" " + ($magickArgs -join " ")
-            
-            $errLogPath = "$env:TEMP\magick_pdf_err.log"
-            if (Test-Path $errLogPath) { Remove-Item $errLogPath }
-            
             $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = "cmd.exe"
-            $psi.Arguments = "/c @cd . & $cmdLine 2> `"$errLogPath`""
+            $psi.FileName = $global:MagickPath
+            $psi.Arguments = $magickArgs -join " "
             $psi.UseShellExecute = $false
+            $psi.RedirectStandardError = $true
             $psi.CreateNoWindow = $true
             
             $p = New-Object System.Diagnostics.Process
             $p.StartInfo = $psi
+            
+            Show-TextProgressBar -PercentComplete 0 -Status "Merging images to PDF..."
             $p.Start() | Out-Null
+            
+            $errLines = @()
+            while (!$p.StandardError.EndOfStream) {
+                $line = $p.StandardError.ReadLine()
+                if ($line) {
+                    if ($line -match "^([^\[]+)\[.+?(\d+)%\s+complete") {
+                        $rawPhase = $matches[1]
+                        $pct = [int]$matches[2]
+                        if ($pct -gt 100) { $pct = 100 }
+                        
+                        $phase = "Merging"
+                        switch ($rawPhase) {
+                            "Resize/Image" { $phase = "Resizing images" }
+                            "Save/Images"  { $phase = "Writing PDF" }
+                            "Save/Image"   { $phase = "Writing PDF" }
+                            "Sample/Image" { $phase = "Sampling images" }
+                            default        { $phase = $rawPhase }
+                        }
+                        
+                        Show-TextProgressBar -PercentComplete $pct -Status "$phase..."
+                    } else {
+                        $errLines += $line
+                    }
+                }
+            }
             $p.WaitForExit()
             
             if ($p.ExitCode -eq 0 -and (Test-Path $resolvedOutFile)) {
-                Write-Host "[SUCCESS] Saved PDF: $resolvedOutFile" -ForegroundColor Cyan
+                Write-Host "`r[SUCCESS] Saved PDF: $(Split-Path $resolvedOutFile -Leaf)".PadRight(110) -ForegroundColor Cyan
             } else {
-                Write-Host "[ERROR] ImageMagick PDF merge failed. Code: $($p.ExitCode)" -ForegroundColor Red
-                if (Test-Path $errLogPath) { Get-Content $errLogPath | Write-Host -ForegroundColor DarkRed }
+                Write-Host "`r[ERROR] ImageMagick PDF merge failed. Code: $($p.ExitCode)".PadRight(110) -ForegroundColor Red
+                if ($errLines.Count -gt 0) {
+                    $errLines | Write-Host -ForegroundColor DarkRed
+                }
             }
         }
     } else {
@@ -162,7 +220,7 @@ function Invoke-ImageConversion {
             $outFile = "$($file.DirectoryName)\$($file.BaseName)$qualityTag.$formatExt"
             
             if ($file.FullName -eq $outFile) {
-                Write-Host "[SKIP] Input and output paths are identical: $($file.Name)" -ForegroundColor Yellow
+                Write-Host "`r[SKIP] Input and output paths are identical: $($file.Name)".PadRight(110) -ForegroundColor Yellow
                 continue
             }
             
@@ -171,8 +229,7 @@ function Invoke-ImageConversion {
                 continue
             }
             
-            Write-Host "[WORKING] Converting $($file.Name) to $formatExt..." -ForegroundColor Green
-            Write-Progress -Activity "Alit Converter" -Status "Converting image: $($file.Name)" -PercentComplete $pct
+            Show-TextProgressBar -PercentComplete $pct -Status "Converting $($file.Name) to $formatExt..."
             
             $errLogPath = "$env:TEMP\magick_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
@@ -191,14 +248,13 @@ function Invoke-ImageConversion {
             $p.WaitForExit()
             
             if ($p.ExitCode -eq 0 -and (Test-Path $resolvedOutFile)) {
-                Write-Host "[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)" -ForegroundColor Cyan
+                Write-Host "`r[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)".PadRight(110) -ForegroundColor Cyan
             } else {
-                Write-Host "[ERROR] ImageMagick failed for $($file.Name). Code: $($p.ExitCode)" -ForegroundColor Red
+                Write-Host "`r[ERROR] ImageMagick failed for $($file.Name). Code: $($p.ExitCode)".PadRight(110) -ForegroundColor Red
                 if (Test-Path $errLogPath) { Get-Content $errLogPath | Write-Host -ForegroundColor DarkRed }
                 if (Test-Path $resolvedOutFile) { Remove-Item $resolvedOutFile }
             }
         }
-        Write-Progress -Activity "Alit Converter" -Completed
     }
 }
 
@@ -297,22 +353,22 @@ function Invoke-VideoConversion {
         $p.StartInfo = $psi
         $p.Start() | Out-Null
         
+        Show-TextProgressBar -PercentComplete 0 -Status "Starting encoding..."
         while (!$p.StandardOutput.EndOfStream) {
             $line = $p.StandardOutput.ReadLine()
             if ($line -match "frame=(\d+)") {
                 $cur = [int]$matches[1]
                 $pct = ($cur / $totalFrames) * 100
                 if ($pct -gt 100) { $pct = 100 }
-                Write-Progress -Activity "Alit Converter" -Status "Converting: $($file.Name)" -PercentComplete $pct
+                Show-TextProgressBar -PercentComplete $pct -Status "Converting: $($file.Name)"
             }
         }
         $p.WaitForExit()
-        Write-Progress -Activity "Alit Converter" -Completed
 
         if ($p.ExitCode -eq 0 -and (Test-Path $resolvedOutFile)) {
-            Write-Host "[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)" -ForegroundColor Cyan
+            Write-Host "`r[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)".PadRight(110) -ForegroundColor Cyan
         } else {
-            Write-Host "[ERROR] FFmpeg failed. Code: $($p.ExitCode)" -ForegroundColor Red
+            Write-Host "`r[ERROR] FFmpeg failed. Code: $($p.ExitCode)".PadRight(110) -ForegroundColor Red
             Write-Host "--- WHAT FFMPEG ACTUALLY SAID ---" -ForegroundColor Yellow
             if (Test-Path $errLogPath) { Get-Content $errLogPath | Write-Host -ForegroundColor DarkRed }
             Write-Host "---------------------------------" -ForegroundColor Yellow
@@ -711,6 +767,9 @@ function Show-ConfigMenus {
     $webQuality = $null
     $webResChoice = $null
     $webHeight = $null
+    $pdfQuality = $null
+    $pdfResChoice = $null
+    $pdfHeight = $null
 
     while ($step -ge 0 -and $step -le 6) {
         # --- STEP 0: Mixed Files Router ---
@@ -881,7 +940,7 @@ function Show-ConfigMenus {
                 continue
             }
             $imageFormatChoice = $choice
-            if ($imageFormatChoice -eq "1" -or $imageFormatChoice -eq "4") {
+            if ($imageFormatChoice -eq "1" -or $imageFormatChoice -eq "2" -or $imageFormatChoice -eq "4") {
                 $step = 5
             } else {
                 $step = 7
@@ -889,7 +948,7 @@ function Show-ConfigMenus {
             continue
         }
 
-        # --- STEP 5: Image Sub-Menu A (JPG Quality or WEB Resolution) ---
+        # --- STEP 5: Image Sub-Menu A (JPG Quality, WEB Resolution, or PDF Resolution) ---
         if ($step -eq 5) {
             if ($imageFormatChoice -eq "1") {
                 $options = [ordered]@{
@@ -966,44 +1025,122 @@ function Show-ConfigMenus {
                 $step = 6
                 continue
             }
+
+            if ($imageFormatChoice -eq "2") {
+                $options = [ordered]@{
+                    "1" = "30%"
+                    "2" = "50%"
+                    "3" = "80%"
+                    "4" = "CUSTOM"
+                    "5" = "ORIGINAL"
+                }
+                $choice = Show-Menu -Title "SELECT PDF Target Resolution / Scale" -Options $options -AllowBack $true -AllowQuit $true
+                
+                if ($choice -eq "q") { return $null }
+                if ($choice -eq "b") { $step = 4; continue }
+                
+                $tempResChoice = $choice
+                if ($tempResChoice -eq "4") {
+                    $tempHeight = $null
+                    while ($true) {
+                        $customHeightInput = Read-Host "Enter custom height in pixels (locking aspect ratio, e.g., 600, or B to go back)"
+                        if ($customHeightInput.Trim() -match '^[Bb]$') {
+                            $tempHeight = "BACK"
+                            break
+                        }
+                        if ($customHeightInput.Trim() -match '^\d+$' -and [int]$customHeightInput -gt 0) {
+                            $tempHeight = [int]$customHeightInput
+                            break
+                        }
+                        Write-Host "Invalid input. Please enter a positive integer." -ForegroundColor Red
+                    }
+                    if ($tempHeight -eq "BACK") { continue }
+                    $pdfHeight = $tempHeight
+                }
+                $pdfResChoice = $tempResChoice
+                $step = 6
+                continue
+            }
         }
 
-        # --- STEP 6: Image Sub-Menu B (WEB Quality) ---
+        # --- STEP 6: Image Sub-Menu B (WEB Quality or PDF Quality) ---
         if ($step -eq 6) {
-            $options = [ordered]@{
-                "1" = "50%"
-                "2" = "60%"
-                "3" = "80%"
-                "4" = "90%"
-                "5" = "CUSTOM"
-            }
-            $choice = Show-Menu -Title "SELECT WEB QUALITY" -Options $options -AllowBack $true -AllowQuit $true
-            
-            if ($choice -eq "q") { return $null }
-            if ($choice -eq "b") { $step = 5; continue }
-            
-            if ($choice -eq "5") {
-                $tempQuality = $null
-                while ($true) {
-                    $customQualityInput = Read-Host "Enter custom quality (1-100, or B to go back)"
-                    if ($customQualityInput.Trim() -match '^[Bb]$') {
-                        $tempQuality = "BACK"
-                        break
-                    }
-                    if ($customQualityInput.Trim() -match '^\d+$' -and [int]$customQualityInput -ge 1 -and [int]$customQualityInput -le 100) {
-                        $tempQuality = [int]$customQualityInput
-                        break
-                    }
-                    Write-Host "Invalid input. Please enter an integer between 1 and 100." -ForegroundColor Red
+            if ($imageFormatChoice -eq "4") {
+                $options = [ordered]@{
+                    "1" = "50%"
+                    "2" = "60%"
+                    "3" = "80%"
+                    "4" = "90%"
+                    "5" = "CUSTOM"
                 }
-                if ($tempQuality -eq "BACK") { continue }
-                $webQuality = $tempQuality
-            } else {
-                $qualities = @{ "1"=50; "2"=60; "3"=80; "4"=90 }
-                $webQuality = $qualities[$choice]
+                $choice = Show-Menu -Title "SELECT WEB QUALITY" -Options $options -AllowBack $true -AllowQuit $true
+                
+                if ($choice -eq "q") { return $null }
+                if ($choice -eq "b") { $step = 5; continue }
+                
+                if ($choice -eq "5") {
+                    $tempQuality = $null
+                    while ($true) {
+                        $customQualityInput = Read-Host "Enter custom quality (1-100, or B to go back)"
+                        if ($customQualityInput.Trim() -match '^[Bb]$') {
+                            $tempQuality = "BACK"
+                            break
+                        }
+                        if ($customQualityInput.Trim() -match '^\d+$' -and [int]$customQualityInput -ge 1 -and [int]$customQualityInput -le 100) {
+                            $tempQuality = [int]$customQualityInput
+                            break
+                        }
+                        Write-Host "Invalid input. Please enter an integer between 1 and 100." -ForegroundColor Red
+                    }
+                    if ($tempQuality -eq "BACK") { continue }
+                    $webQuality = $tempQuality
+                } else {
+                    $qualities = @{ "1"=50; "2"=60; "3"=80; "4"=90 }
+                    $webQuality = $qualities[$choice]
+                }
+                $step = 7
+                continue
             }
-            $step = 7
-            continue
+
+            if ($imageFormatChoice -eq "2") {
+                $options = [ordered]@{
+                    "1" = "50%"
+                    "2" = "60%"
+                    "3" = "80%"
+                    "4" = "90%"
+                    "5" = "CUSTOM"
+                    "6" = "ORIGINAL"
+                }
+                $choice = Show-Menu -Title "SELECT PDF QUALITY" -Options $options -AllowBack $true -AllowQuit $true
+                
+                if ($choice -eq "q") { return $null }
+                if ($choice -eq "b") { $step = 5; continue }
+                
+                if ($choice -eq "5") {
+                    $tempQuality = $null
+                    while ($true) {
+                        $customQualityInput = Read-Host "Enter custom quality (1-100, or B to go back)"
+                        if ($customQualityInput.Trim() -match '^[Bb]$') {
+                            $tempQuality = "BACK"
+                            break
+                        }
+                        if ($customQualityInput.Trim() -match '^\d+$' -and [int]$customQualityInput -ge 1 -and [int]$customQualityInput -le 100) {
+                            $tempQuality = [int]$customQualityInput
+                            break
+                        }
+                        Write-Host "Invalid input. Please enter an integer between 1 and 100." -ForegroundColor Red
+                    }
+                    if ($tempQuality -eq "BACK") { continue }
+                    $pdfQuality = $tempQuality
+                } elseif ($choice -eq "6") {
+                    $pdfQuality = "ORIGINAL"
+                } else {
+                    $qualities = @{ "1"=50; "2"=60; "3"=80; "4"=90 }
+                    $pdfQuality = $qualities[$choice]
+                }
+                $step = 7
+                continue
+            }
         }
     }
 
@@ -1019,6 +1156,9 @@ function Show-ConfigMenus {
         WebQuality         = $webQuality
         WebResChoice       = $webResChoice
         WebHeight          = $webHeight
+        PdfQuality         = $pdfQuality
+        PdfResChoice       = $pdfResChoice
+        PdfHeight          = $pdfHeight
     }
 }
 
@@ -1191,6 +1331,43 @@ function Show-Menu {
 }
 
 # --- END OF MODULE: MenuHelper.ps1 ---
+
+# --- START OF MODULE: ProgressBarHelper.ps1 ---
+function Show-TextProgressBar {
+    param (
+        [Parameter(Mandatory = $true)]
+        [double]$PercentComplete,
+        [Parameter(Mandatory = $false)]
+        [string]$Status = ""
+    )
+
+    $width = 30
+    $percent = [Math]::Max(0, [Math]::Min(100, $PercentComplete))
+    $completedWidth = [Math]::Round(($percent / 100) * $width)
+    $remainingWidth = $width - $completedWidth
+
+    $bar = ("#" * $completedWidth) + ("-" * $remainingWidth)
+    
+    $statusMsg = if ($Status) { " | $Status" } else { "" }
+    $text = "`r[$bar] $([Math]::Round($percent))%$statusMsg"
+
+    # Pad with spaces to clear any previous longer text line
+    $paddedText = $text.PadRight(110)
+    
+    # Safely truncate to window width to prevent line wrapping if possible
+    try {
+        if ([Console]::WindowWidth -gt 20) {
+            $lineWidth = [Console]::WindowWidth - 1
+            if ($paddedText.Length -gt $lineWidth) {
+                $paddedText = $paddedText.Substring(0, $lineWidth)
+            }
+        }
+    } catch {}
+
+    Write-Host -NoNewline $paddedText
+}
+
+# --- END OF MODULE: ProgressBarHelper.ps1 ---
 
 # --- END BUNDLED MODULES ---
 

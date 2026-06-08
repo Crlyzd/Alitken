@@ -19,52 +19,110 @@ function Invoke-ImageConversion {
     $webQuality = $config.WebQuality
     $webResChoice = $config.WebResChoice
     $webHeight = $config.WebHeight
+    $pdfQuality = $config.PdfQuality
+    $pdfResChoice = $config.PdfResChoice
+    $pdfHeight = $config.PdfHeight
 
     Write-Host "`n[WORKING] Processing images..." -ForegroundColor Green
     
     if ($imageFormatChoice -eq "2") {
         # PDF format
+        $resizeFlag = ""
+        $resTag = ""
+        if ($pdfResChoice -eq "1") {
+            $resizeFlag = "-resize 30%"
+            $resTag = "_30pct"
+        } elseif ($pdfResChoice -eq "2") {
+            $resizeFlag = "-resize 50%"
+            $resTag = "_50pct"
+        } elseif ($pdfResChoice -eq "3") {
+            $resizeFlag = "-resize 80%"
+            $resTag = "_80pct"
+        } elseif ($pdfResChoice -eq "4") {
+            $resizeFlag = "-resize x$pdfHeight"
+            $resTag = "_h$pdfHeight"
+        }
+
+        $qualityFlag = ""
+        $qualityTag = ""
+        if ($pdfQuality -and $pdfQuality -ne "ORIGINAL") {
+            $qualityFlag = "-quality $pdfQuality"
+            $qualityTag = "_q$pdfQuality"
+        }
+
+        $pdfTag = "${resTag}${qualityTag}"
+
         if ($imageFiles.Count -eq 1) {
             $file = $imageFiles[0]
-            $outFile = "$($file.DirectoryName)\$($file.BaseName).pdf"
+            $outFile = "$($file.DirectoryName)\$($file.BaseName)$pdfTag.pdf"
         } else {
             $firstFile = $imageFiles[0]
-            $outFile = "$($firstFile.DirectoryName)\Merged_Images.pdf"
+            $outFile = "$($firstFile.DirectoryName)\Merged_Images$pdfTag.pdf"
         }
         
         $resolvedOutFile = Get-ConflictResolution -filePath $outFile
         if (!$resolvedOutFile) {
             # Skipped
         } else {
-            Write-Host "[WORKING] Merging $($imageFiles.Count) images into $resolvedOutFile..." -ForegroundColor Green
             # Construct args for magick
-            $magickArgs = @()
+            $magickArgs = @("-monitor")
             foreach ($img in $imageFiles) {
                 $magickArgs += "`"$($img.FullName)`""
             }
+            if ($resizeFlag) {
+                $magickArgs += $resizeFlag
+            }
+            if ($qualityFlag) {
+                $magickArgs += $qualityFlag
+            }
             $magickArgs += "`"$resolvedOutFile`""
             
-            $cmdLine = "`"$global:MagickPath`" " + ($magickArgs -join " ")
-            
-            $errLogPath = "$env:TEMP\magick_pdf_err.log"
-            if (Test-Path $errLogPath) { Remove-Item $errLogPath }
-            
             $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = "cmd.exe"
-            $psi.Arguments = "/c @cd . & $cmdLine 2> `"$errLogPath`""
+            $psi.FileName = $global:MagickPath
+            $psi.Arguments = $magickArgs -join " "
             $psi.UseShellExecute = $false
+            $psi.RedirectStandardError = $true
             $psi.CreateNoWindow = $true
             
             $p = New-Object System.Diagnostics.Process
             $p.StartInfo = $psi
+            
+            Show-TextProgressBar -PercentComplete 0 -Status "Merging images to PDF..."
             $p.Start() | Out-Null
+            
+            $errLines = @()
+            while (!$p.StandardError.EndOfStream) {
+                $line = $p.StandardError.ReadLine()
+                if ($line) {
+                    if ($line -match "^([^\[]+)\[.+?(\d+)%\s+complete") {
+                        $rawPhase = $matches[1]
+                        $pct = [int]$matches[2]
+                        if ($pct -gt 100) { $pct = 100 }
+                        
+                        $phase = "Merging"
+                        switch ($rawPhase) {
+                            "Resize/Image" { $phase = "Resizing images" }
+                            "Save/Images"  { $phase = "Writing PDF" }
+                            "Save/Image"   { $phase = "Writing PDF" }
+                            "Sample/Image" { $phase = "Sampling images" }
+                            default        { $phase = $rawPhase }
+                        }
+                        
+                        Show-TextProgressBar -PercentComplete $pct -Status "$phase..."
+                    } else {
+                        $errLines += $line
+                    }
+                }
+            }
             $p.WaitForExit()
             
             if ($p.ExitCode -eq 0 -and (Test-Path $resolvedOutFile)) {
-                Write-Host "[SUCCESS] Saved PDF: $resolvedOutFile" -ForegroundColor Cyan
+                Write-Host "`r[SUCCESS] Saved PDF: $(Split-Path $resolvedOutFile -Leaf)".PadRight(110) -ForegroundColor Cyan
             } else {
-                Write-Host "[ERROR] ImageMagick PDF merge failed. Code: $($p.ExitCode)" -ForegroundColor Red
-                if (Test-Path $errLogPath) { Get-Content $errLogPath | Write-Host -ForegroundColor DarkRed }
+                Write-Host "`r[ERROR] ImageMagick PDF merge failed. Code: $($p.ExitCode)".PadRight(110) -ForegroundColor Red
+                if ($errLines.Count -gt 0) {
+                    $errLines | Write-Host -ForegroundColor DarkRed
+                }
             }
         }
     } else {
@@ -118,7 +176,7 @@ function Invoke-ImageConversion {
             $outFile = "$($file.DirectoryName)\$($file.BaseName)$qualityTag.$formatExt"
             
             if ($file.FullName -eq $outFile) {
-                Write-Host "[SKIP] Input and output paths are identical: $($file.Name)" -ForegroundColor Yellow
+                Write-Host "`r[SKIP] Input and output paths are identical: $($file.Name)".PadRight(110) -ForegroundColor Yellow
                 continue
             }
             
@@ -127,8 +185,7 @@ function Invoke-ImageConversion {
                 continue
             }
             
-            Write-Host "[WORKING] Converting $($file.Name) to $formatExt..." -ForegroundColor Green
-            Write-Progress -Activity "Alit Converter" -Status "Converting image: $($file.Name)" -PercentComplete $pct
+            Show-TextProgressBar -PercentComplete $pct -Status "Converting $($file.Name) to $formatExt..."
             
             $errLogPath = "$env:TEMP\magick_err.log"
             if (Test-Path $errLogPath) { Remove-Item $errLogPath }
@@ -147,13 +204,12 @@ function Invoke-ImageConversion {
             $p.WaitForExit()
             
             if ($p.ExitCode -eq 0 -and (Test-Path $resolvedOutFile)) {
-                Write-Host "[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)" -ForegroundColor Cyan
+                Write-Host "`r[SUCCESS] Saved: $(Split-Path $resolvedOutFile -Leaf)".PadRight(110) -ForegroundColor Cyan
             } else {
-                Write-Host "[ERROR] ImageMagick failed for $($file.Name). Code: $($p.ExitCode)" -ForegroundColor Red
+                Write-Host "`r[ERROR] ImageMagick failed for $($file.Name). Code: $($p.ExitCode)".PadRight(110) -ForegroundColor Red
                 if (Test-Path $errLogPath) { Get-Content $errLogPath | Write-Host -ForegroundColor DarkRed }
                 if (Test-Path $resolvedOutFile) { Remove-Item $resolvedOutFile }
             }
         }
-        Write-Progress -Activity "Alit Converter" -Completed
     }
 }
